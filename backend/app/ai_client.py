@@ -15,6 +15,11 @@ REQUIRED_PROMPT_FIELDS = [
     "negative_prompt",
 ]
 
+POSITIVE_STYLE_PROMPT = (
+    "漫画封面、精致二次元动漫插画、清晰线稿、赛璐璐上色与轻厚涂结合、"
+    "强逆光、漫画PV截图质感。"
+)
+
 
 def extract_prompt_items(content):
     text = content.strip()
@@ -58,11 +63,17 @@ class OpenAICompatibleClient:
             payload = self._build_split_payload(chapter_text, image_count, last_count)
             response = self._post_json("/chat/completions", payload)
             content = response["choices"][0]["message"]["content"]
-            items = extract_prompt_items(content)
+            items = self._ensure_positive_style(extract_prompt_items(content))
             if len(items) == image_count:
                 return items
             last_count = len(items)
         raise ValueError(f"Expected {image_count} prompts, got {last_count}.")
+
+    def _ensure_positive_style(self, items):
+        for item in items:
+            if POSITIVE_STYLE_PROMPT not in item["positive_prompt"]:
+                item["positive_prompt"] = f"{POSITIVE_STYLE_PROMPT}{item['positive_prompt']}"
+        return items
 
     def _build_split_payload(self, chapter_text, image_count, previous_count=None):
         correction = ""
@@ -81,6 +92,7 @@ class OpenAICompatibleClient:
                         '输出格式必须是 {"prompts":[...]}。prompts 数组里的每个对象必须包含 '
                         "title、scene_summary、viewpoint、positive_prompt、negative_prompt。"
                         "positive_prompt 约 200 中文字，必须是生图模型可识别的画面提示词。"
+                        f"所有 positive_prompt 必须明确写入：{POSITIVE_STYLE_PROMPT}"
                     ),
                 },
                 {
@@ -88,6 +100,7 @@ class OpenAICompatibleClient:
                     "content": (
                         f"{correction}"
                         f"请把以下小说章节拆成正好 {image_count} 个不同场景视角的插画提示词，"
+                        "所有场景保持漫画封面风格，"
                         f'并返回 {{"prompts":[...]}}，prompts 数组长度必须等于 {image_count}。\n\n'
                         f"{chapter_text}"
                     ),
@@ -98,7 +111,7 @@ class OpenAICompatibleClient:
         }
         return payload
 
-    def generate_image(self, prompt, output_path):
+    def generate_image(self, prompt, output_path, image_size=None):
         image_prompt = prompt["positive_prompt"]
         if prompt.get("negative_prompt"):
             image_prompt = f"{image_prompt}\n\n避免：{prompt['negative_prompt']}"
@@ -106,7 +119,7 @@ class OpenAICompatibleClient:
         payload = {
             "model": self.settings.image_model,
             "prompt": image_prompt,
-            "size": self.settings.image_size,
+            "size": image_size or self.settings.image_size,
         }
         if self.settings.image_return_base64:
             payload["return_base64"] = True
@@ -130,17 +143,20 @@ class OpenAICompatibleClient:
     def _post_json(self, path, payload):
         url = self.settings.base_url.rstrip("/") + path
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self.settings.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
         max_retries = getattr(self.settings, "max_retries", 2)
         for attempt in range(max_retries + 1):
+            request = urllib.request.Request(
+                url,
+                data=body,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self.settings.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Connection": "close",
+                    "User-Agent": "novel-illustrator/1.0",
+                },
+            )
             try:
                 with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as resp:
                     return json.loads(resp.read().decode("utf-8"))
@@ -153,7 +169,9 @@ class OpenAICompatibleClient:
                 raise RuntimeError(f"Model API error {exc.code}: {detail}") from exc
             except (TimeoutError, urllib.error.URLError, OSError) as exc:
                 if attempt >= max_retries:
-                    raise RuntimeError(f"Model API connection failed after {attempt + 1} attempts: {exc}") from exc
-                time.sleep(min(2 ** attempt, 5))
+                    raise RuntimeError(
+                        f"模型接口连接失败，已重试 {attempt + 1} 次仍未成功：{exc}"
+                    ) from exc
+                time.sleep(min(2 ** attempt, 10))
 
         raise RuntimeError("Model API request failed.")

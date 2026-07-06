@@ -16,6 +16,7 @@ class Settings:
     outputs_dir: Path
     timeout_seconds: int
     max_retries: int
+    legacy_owner_id: str
 
 
 def load_settings():
@@ -33,7 +34,8 @@ def load_settings():
         database_path=Path(os.getenv("DATABASE_PATH", data_dir / "app.db")),
         outputs_dir=Path(os.getenv("OUTPUTS_DIR", "outputs")),
         timeout_seconds=int(os.getenv("MODEL_TIMEOUT_SECONDS", "120")),
-        max_retries=int(os.getenv("MODEL_MAX_RETRIES", "2")),
+        max_retries=int(os.getenv("MODEL_MAX_RETRIES", "5")),
+        legacy_owner_id=os.getenv("LEGACY_OWNER_ID", "").strip(),
     )
 
 
