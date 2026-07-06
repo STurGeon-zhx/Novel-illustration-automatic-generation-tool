@@ -12,6 +12,19 @@ const IMAGE_RATIO_OPTIONS = [
   { label: "2:3", size: "682x1024" },
   { label: "21:9", size: "1024x439" }
 ];
+const VISUAL_STYLE_OPTIONS = [
+  { label: "都市真人", value: "urban_live" },
+  { label: "古装真人", value: "ancient_live" },
+  { label: "都市动漫", value: "urban_anime" },
+  { label: "古装动漫", value: "ancient_anime" }
+];
+const GENRE_STYLE_OPTIONS = [
+  { label: "言情", value: "romance" },
+  { label: "玄幻", value: "fantasy" },
+  { label: "悬疑", value: "suspense" },
+  { label: "科幻", value: "scifi" },
+  { label: "末世", value: "apocalypse" }
+];
 
 function getClientId() {
   let clientId = window.localStorage.getItem(CLIENT_ID_KEY);
@@ -77,9 +90,24 @@ function statusText(status) {
   }[status] || status;
 }
 
+function styleLabel(options, value) {
+  return options.find((option) => option.value === value)?.label || "";
+}
+
+function taskStyleText(item) {
+  const visual = styleLabel(VISUAL_STYLE_OPTIONS, item?.visual_style);
+  const genre = styleLabel(GENRE_STYLE_OPTIONS, item?.genre_style);
+  if (!visual || !genre) {
+    return "旧任务/未设置风格";
+  }
+  return `${visual} · ${genre}`;
+}
+
 export default function App() {
   const [chapterText, setChapterText] = useState("");
   const [imageCount, setImageCount] = useState(6);
+  const [visualStyle, setVisualStyle] = useState("");
+  const [genreStyle, setGenreStyle] = useState("");
   const [task, setTask] = useState(emptyTask);
   const [tasks, setTasks] = useState([]);
   const [busy, setBusy] = useState("");
@@ -100,7 +128,8 @@ export default function App() {
     }
   }, [clientReady]);
 
-  const canGeneratePrompts = clientReady && chapterText.trim().length > 0 && !busy;
+  const canGeneratePrompts =
+    clientReady && chapterText.trim().length > 0 && visualStyle && genreStyle && !busy;
   const canGenerateImages = clientReady && task?.prompts?.length > 0 && !busy;
 
   const imageByPosition = useMemo(() => {
@@ -204,7 +233,9 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           chapter_text: chapterText,
-          image_count: Number(imageCount)
+          image_count: Number(imageCount),
+          visual_style: visualStyle,
+          genre_style: genreStyle
         })
       });
       setTask(data);
@@ -337,6 +368,7 @@ export default function App() {
               <button className="history-main" type="button" onClick={() => loadTask(item.id)}>
                 <span>{statusText(item.status)}</span>
                 <strong>{item.chapter_preview || "空章节"}</strong>
+                <em className="history-style">{taskStyleText(item)}</em>
                 <small>{item.updated_at}</small>
               </button>
               <button
@@ -357,7 +389,7 @@ export default function App() {
         <header className="topbar">
           <div>
             <h2>{task ? "任务详情" : "新建插画任务"}</h2>
-            <p>{task ? `任务 ${task.id}` : "输入章节，先生成可编辑的结构化提示词"}</p>
+            <p>{task ? `任务 ${task.id} · ${taskStyleText(task)}` : "输入章节，先生成可编辑的结构化提示词"}</p>
           </div>
           {task && <span className={`status ${task.status}`}>{statusText(task.status)}</span>}
         </header>
@@ -374,6 +406,41 @@ export default function App() {
                 placeholder="粘贴一章小说正文"
               />
             </label>
+            <div className="style-selector">
+              <div className="style-group">
+                <span>第一风格</span>
+                <div className="style-options">
+                  {VISUAL_STYLE_OPTIONS.map((option) => (
+                    <button
+                      className={`style-chip ${visualStyle === option.value ? "selected" : ""}`}
+                      key={option.value}
+                      type="button"
+                      onClick={() => setVisualStyle(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="style-group">
+                <span>第二风格</span>
+                <div className="style-options">
+                  {GENRE_STYLE_OPTIONS.map((option) => (
+                    <button
+                      className={`style-chip ${genreStyle === option.value ? "selected" : ""}`}
+                      key={option.value}
+                      type="button"
+                      onClick={() => setGenreStyle(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {(!visualStyle || !genreStyle) && (
+                <p className="form-hint">请先选择第一风格和第二风格，再拆分提示词。</p>
+              )}
+            </div>
             <div className="input-actions">
               <label className="count-control">
                 <span>图片数量</span>

@@ -159,6 +159,12 @@ button:disabled {
   color: #7a8491;
 }
 
+.history-style {
+  color: #8a6f2a;
+  font-size: 12px;
+  font-style: normal;
+}
+
 .history-delete {
   justify-self: end;
   width: fit-content;
@@ -258,6 +264,50 @@ input {
   display: flex;
   align-items: end;
   gap: 12px;
+}
+
+.style-selector {
+  display: grid;
+  gap: 14px;
+}
+
+.style-group {
+  display: grid;
+  gap: 8px;
+}
+
+.style-group > span {
+  color: #4a5565;
+  font-size: 13px;
+}
+
+.style-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.style-chip {
+  min-width: 86px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2933;
+}
+
+.style-chip.selected {
+  border-color: #2f6f61;
+  background: #eef6f3;
+  color: #2f6f61;
+  font-weight: 700;
+}
+
+.form-hint {
+  margin: 0;
+  color: #8a6f2a;
+  font-size: 13px;
 }
 
 .count-control {
@@ -568,6 +618,15 @@ input {
   .result-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .style-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .style-chip {
+    width: 100%;
   }
 
   .secondary-button {

@@ -15,6 +15,8 @@ from .service import IllustrationService
 class CreateTaskRequest(BaseModel):
     chapter_text: str = Field(min_length=1)
     image_count: int = Field(ge=1, le=10)
+    visual_style: str | None = None
+    genre_style: str | None = None
 
 
 class PromptItem(BaseModel):
@@ -100,7 +102,13 @@ def delete_task(task_id: str, owner_id: str = Depends(get_client_id)):
 @app.post("/api/tasks")
 def create_task(request: CreateTaskRequest, owner_id: str = Depends(get_client_id)):
     try:
-        return service.create_prompt_task(request.chapter_text, request.image_count, owner_id)
+        return service.create_prompt_task(
+            request.chapter_text,
+            request.image_count,
+            owner_id,
+            request.visual_style,
+            request.genre_style,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

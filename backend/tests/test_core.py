@@ -10,11 +10,15 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.ai_client import extract_prompt_items
 from app.ai_client import OpenAICompatibleClient
 from app.ai_client import POSITIVE_STYLE_PROMPT
+from app.main import CreateTaskRequest
+from app.main import create_task as create_task_endpoint
 from app.repository import TaskRepository
 from app.service import IllustrationService
 
@@ -23,8 +27,10 @@ class FakeAiClient:
     def __init__(self):
         self.image_calls = []
         self.image_sizes = []
+        self.split_styles = []
 
-    def split_chapter(self, chapter_text, image_count):
+    def split_chapter(self, chapter_text, image_count, visual_style=None, genre_style=None):
+        self.split_styles.append((visual_style, genre_style))
         return [
             {
                 "title": f"scene {index}",
@@ -146,6 +152,33 @@ class AgnesClientTests(unittest.TestCase):
         prompts = client.split_chapter("雨夜里，少年回到故乡。", 1)
 
         self.assertTrue(prompts[0]["positive_prompt"].startswith(POSITIVE_STYLE_PROMPT))
+
+    def test_split_chapter_builds_urban_live_suspense_style(self):
+        client = RecordingAgnesClient()
+
+        prompts = client.split_chapter("手机震动，侦探站在高楼天台俯瞰城市。", 1, "urban_live", "suspense")
+
+        _, payload = client.calls[0]
+        joined_messages = "\n".join(message["content"] for message in payload["messages"])
+        self.assertIn("现代城市", joined_messages)
+        self.assertIn("真人剧照感", joined_messages)
+        self.assertIn("悬疑氛围", joined_messages)
+        self.assertNotIn("古装", joined_messages)
+        self.assertIn("现代城市", prompts[0]["positive_prompt"])
+        self.assertIn("悬疑氛围", prompts[0]["positive_prompt"])
+
+    def test_split_chapter_builds_ancient_anime_fantasy_style(self):
+        client = RecordingAgnesClient()
+
+        prompts = client.split_chapter("仙门钟声响起，少年拔剑踏入秘境。", 1, "ancient_anime", "fantasy")
+
+        _, payload = client.calls[0]
+        joined_messages = "\n".join(message["content"] for message in payload["messages"])
+        self.assertIn("古装", joined_messages)
+        self.assertIn("精致二次元动漫插画", joined_messages)
+        self.assertIn("玄幻元素", joined_messages)
+        self.assertIn("古装", prompts[0]["positive_prompt"])
+        self.assertIn("玄幻元素", prompts[0]["positive_prompt"])
 
     def test_split_chapter_retries_when_prompt_count_is_wrong(self):
         client = CountRetryAgnesClient()
@@ -322,7 +355,7 @@ class RepositoryTests(unittest.TestCase):
             repo = TaskRepository(db_path)
             repo.init_schema()
 
-            task_id = repo.create_task("chapter text", 2, "owner-a")
+            task_id = repo.create_task("chapter text", 2, "owner-a", "urban_anime", "fantasy")
             repo.replace_prompts(
                 task_id,
                 [
@@ -342,6 +375,8 @@ class RepositoryTests(unittest.TestCase):
             task = repo.get_task(task_id, "owner-a")
 
             self.assertEqual(task["chapter_text"], "chapter text")
+            self.assertEqual(task["visual_style"], "urban_anime")
+            self.assertEqual(task["genre_style"], "fantasy")
             self.assertEqual(task["prompts"][0]["title"], "scene")
             self.assertEqual(task["images"][0]["status"], "done")
             self.assertIsNone(repo.get_task(task_id, "owner-b"))
@@ -352,7 +387,7 @@ class RepositoryTests(unittest.TestCase):
             repo = TaskRepository(db_path)
             repo.init_schema()
 
-            task_id = repo.create_task("chapter text", 1, "owner-a")
+            task_id = repo.create_task("chapter text", 1, "owner-a", "urban_anime", "fantasy")
             repo.replace_prompts(
                 task_id,
                 [
@@ -379,13 +414,15 @@ class RepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = TaskRepository(Path(tmpdir) / "app.db")
             repo.init_schema()
-            owner_a_task = repo.create_task("chapter a", 1, "owner-a")
-            repo.create_task("chapter b", 1, "owner-b")
+            owner_a_task = repo.create_task("chapter a", 1, "owner-a", "urban_anime", "fantasy")
+            repo.create_task("chapter b", 1, "owner-b", "ancient_live", "romance")
 
             owner_a_tasks = repo.list_tasks("owner-a")
             owner_b_tasks = repo.list_tasks("owner-b")
 
             self.assertEqual([task["id"] for task in owner_a_tasks], [owner_a_task])
+            self.assertEqual(owner_a_tasks[0]["visual_style"], "urban_anime")
+            self.assertEqual(owner_a_tasks[0]["genre_style"], "fantasy")
             self.assertEqual(len(owner_b_tasks), 1)
 
     def test_task_repository_claims_legacy_tasks_for_configured_owner(self):
@@ -418,6 +455,8 @@ class RepositoryTests(unittest.TestCase):
             repo.init_schema(legacy_owner_id="owner-a")
 
             self.assertEqual(repo.list_tasks("owner-a")[0]["id"], "legacy-task")
+            self.assertIsNone(repo.list_tasks("owner-a")[0]["visual_style"])
+            self.assertIsNone(repo.get_task("legacy-task", "owner-a")["genre_style"])
             self.assertEqual(repo.list_tasks("owner-b"), [])
 
 
@@ -429,11 +468,37 @@ class ServiceTests(unittest.TestCase):
             repo.init_schema()
             service = IllustrationService(repo, FakeAiClient(), root / "outputs")
 
-            task = service.create_prompt_task("long chapter", 3, "owner-a")
+            task = service.create_prompt_task("long chapter", 3, "owner-a", "urban_anime", "fantasy")
 
             self.assertEqual(task["image_count"], 3)
+            self.assertEqual(task["visual_style"], "urban_anime")
+            self.assertEqual(task["genre_style"], "fantasy")
             self.assertEqual(len(task["prompts"]), 3)
             self.assertEqual(task["status"], "prompts_ready")
+
+    def test_service_passes_selected_styles_to_prompt_client(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = TaskRepository(root / "app.db")
+            repo.init_schema()
+            ai_client = FakeAiClient()
+            service = IllustrationService(repo, ai_client, root / "outputs")
+
+            service.create_prompt_task("long chapter", 1, "owner-a", "ancient_live", "romance")
+
+            self.assertEqual(ai_client.split_styles, [("ancient_live", "romance")])
+
+    def test_service_rejects_missing_or_unknown_styles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = TaskRepository(root / "app.db")
+            repo.init_schema()
+            service = IllustrationService(repo, FakeAiClient(), root / "outputs")
+
+            with self.assertRaises(ValueError):
+                service.create_prompt_task("long chapter", 1, "owner-a", None, "fantasy")
+            with self.assertRaises(ValueError):
+                service.create_prompt_task("long chapter", 1, "owner-a", "urban_anime", "unknown")
 
     def test_service_generates_images_for_saved_prompts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -442,7 +507,7 @@ class ServiceTests(unittest.TestCase):
             repo.init_schema()
             ai_client = FakeAiClient()
             service = IllustrationService(repo, ai_client, root / "outputs")
-            task = service.create_prompt_task("long chapter", 2, "owner-a")
+            task = service.create_prompt_task("long chapter", 2, "owner-a", "urban_anime", "fantasy")
 
             updated = service.generate_images(task["id"], "owner-a")
 
@@ -457,7 +522,7 @@ class ServiceTests(unittest.TestCase):
             repo.init_schema()
             ai_client = FakeAiClient()
             service = IllustrationService(repo, ai_client, root / "outputs")
-            task = service.create_prompt_task("long chapter", 2, "owner-a")
+            task = service.create_prompt_task("long chapter", 2, "owner-a", "urban_anime", "fantasy")
 
             service.generate_images(task["id"], "owner-a", image_size="768x1024")
 
@@ -470,7 +535,7 @@ class ServiceTests(unittest.TestCase):
             repo.init_schema()
             ai_client = FakeAiClient()
             service = IllustrationService(repo, ai_client, root / "outputs")
-            task = service.create_prompt_task("long chapter", 2, "owner-a")
+            task = service.create_prompt_task("long chapter", 2, "owner-a", "urban_anime", "fantasy")
             generated = service.generate_images(task["id"], "owner-a")
             kept_image = next(image for image in generated["images"] if image["prompt_position"] == 2)
             ai_client.image_calls.clear()
@@ -507,7 +572,7 @@ class ServiceTests(unittest.TestCase):
             service = IllustrationService(repo, FakeAiClient(), root / "outputs")
 
             with self.assertRaises(ValueError):
-                service.create_prompt_task("chapter", 11, "owner-a")
+                service.create_prompt_task("chapter", 11, "owner-a", "urban_anime", "fantasy")
 
     def test_service_rejects_other_owner_task_access(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -515,10 +580,58 @@ class ServiceTests(unittest.TestCase):
             repo = TaskRepository(root / "app.db")
             repo.init_schema()
             service = IllustrationService(repo, FakeAiClient(), root / "outputs")
-            task = service.create_prompt_task("long chapter", 1, "owner-a")
+            task = service.create_prompt_task("long chapter", 1, "owner-a", "urban_anime", "fantasy")
 
             with self.assertRaises(KeyError):
                 service.generate_images(task["id"], "owner-b")
+
+
+class MainEndpointTests(unittest.TestCase):
+    def test_create_task_endpoint_passes_style_tags_to_service(self):
+        request = CreateTaskRequest(
+            chapter_text="long chapter",
+            image_count=1,
+            visual_style="urban_anime",
+            genre_style="fantasy",
+        )
+
+        with patch("app.main.service") as service:
+            service.create_prompt_task.return_value = {"id": "task-id"}
+            response = create_task_endpoint(request, "owner-a")
+
+        self.assertEqual(response, {"id": "task-id"})
+        service.create_prompt_task.assert_called_once_with(
+            "long chapter",
+            1,
+            "owner-a",
+            "urban_anime",
+            "fantasy",
+        )
+
+    def test_create_task_endpoint_rejects_missing_style_tags_with_400(self):
+        request = CreateTaskRequest(chapter_text="long chapter", image_count=1)
+
+        with patch("app.main.service") as service:
+            service.create_prompt_task.side_effect = ValueError("Style tags are required.")
+            with self.assertRaises(HTTPException) as context:
+                create_task_endpoint(request, "owner-a")
+
+        self.assertEqual(context.exception.status_code, 400)
+
+    def test_create_task_endpoint_rejects_invalid_style_tags_with_400(self):
+        request = CreateTaskRequest(
+            chapter_text="long chapter",
+            image_count=1,
+            visual_style="unknown",
+            genre_style="fantasy",
+        )
+
+        with patch("app.main.service") as service:
+            service.create_prompt_task.side_effect = ValueError("Unknown style tag.")
+            with self.assertRaises(HTTPException) as context:
+                create_task_endpoint(request, "owner-a")
+
+        self.assertEqual(context.exception.status_code, 400)
 
 
 if __name__ == "__main__":

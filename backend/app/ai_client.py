@@ -20,6 +20,37 @@ POSITIVE_STYLE_PROMPT = (
     "强逆光、漫画PV截图质感。"
 )
 
+VISUAL_STYLE_PROMPTS = {
+    "urban_live": "漫画封面、现代城市背景、现代服装与生活道具、真人剧照感、影视海报质感、真实人物比例、强逆光",
+    "ancient_live": "漫画封面、古装时代背景、古装服饰与传统建筑、真人剧照感、影视海报质感、真实人物比例、强逆光",
+    "urban_anime": (
+        "漫画封面、现代城市背景、现代服装与生活道具、精致二次元动漫插画、清晰线稿、"
+        "赛璐璐上色与轻厚涂结合、强逆光、漫画PV截图质感"
+    ),
+    "ancient_anime": (
+        "漫画封面、古装时代背景、古装服饰与传统建筑、精致二次元动漫插画、清晰线稿、"
+        "赛璐璐上色与轻厚涂结合、强逆光、漫画PV截图质感"
+    ),
+}
+
+GENRE_STYLE_PROMPTS = {
+    "romance": "言情氛围、细腻情绪、柔和光影、人物关系张力",
+    "fantasy": "玄幻元素、能量光效、超自然力量、史诗感氛围",
+    "suspense": "悬疑氛围、紧张构图、冷调阴影、危险临近感",
+    "scifi": "科幻元素、未来科技、机械光效、理性冷峻氛围",
+    "apocalypse": "末世氛围、废墟环境、生存压迫感、破败质感",
+}
+
+
+def build_positive_style_prompt(visual_style=None, genre_style=None):
+    if not visual_style and not genre_style:
+        return POSITIVE_STYLE_PROMPT
+    if visual_style not in VISUAL_STYLE_PROMPTS:
+        raise ValueError(f"Unknown visual style: {visual_style}")
+    if genre_style not in GENRE_STYLE_PROMPTS:
+        raise ValueError(f"Unknown genre style: {genre_style}")
+    return f"{VISUAL_STYLE_PROMPTS[visual_style]}、{GENRE_STYLE_PROMPTS[genre_style]}。"
+
 
 def extract_prompt_items(content):
     text = content.strip()
@@ -57,25 +88,26 @@ class OpenAICompatibleClient:
     def __init__(self, settings):
         self.settings = settings
 
-    def split_chapter(self, chapter_text, image_count):
+    def split_chapter(self, chapter_text, image_count, visual_style=None, genre_style=None):
+        style_prompt = build_positive_style_prompt(visual_style, genre_style)
         last_count = None
         for attempt in range(getattr(self.settings, "max_retries", 2) + 1):
-            payload = self._build_split_payload(chapter_text, image_count, last_count)
+            payload = self._build_split_payload(chapter_text, image_count, style_prompt, last_count)
             response = self._post_json("/chat/completions", payload)
             content = response["choices"][0]["message"]["content"]
-            items = self._ensure_positive_style(extract_prompt_items(content))
+            items = self._ensure_positive_style(extract_prompt_items(content), style_prompt)
             if len(items) == image_count:
                 return items
             last_count = len(items)
         raise ValueError(f"Expected {image_count} prompts, got {last_count}.")
 
-    def _ensure_positive_style(self, items):
+    def _ensure_positive_style(self, items, style_prompt):
         for item in items:
-            if POSITIVE_STYLE_PROMPT not in item["positive_prompt"]:
-                item["positive_prompt"] = f"{POSITIVE_STYLE_PROMPT}{item['positive_prompt']}"
+            if style_prompt not in item["positive_prompt"]:
+                item["positive_prompt"] = f"{style_prompt}{item['positive_prompt']}"
         return items
 
-    def _build_split_payload(self, chapter_text, image_count, previous_count=None):
+    def _build_split_payload(self, chapter_text, image_count, style_prompt, previous_count=None):
         correction = ""
         if previous_count is not None:
             correction = (
@@ -92,7 +124,7 @@ class OpenAICompatibleClient:
                         '输出格式必须是 {"prompts":[...]}。prompts 数组里的每个对象必须包含 '
                         "title、scene_summary、viewpoint、positive_prompt、negative_prompt。"
                         "positive_prompt 约 200 中文字，必须是生图模型可识别的画面提示词。"
-                        f"所有 positive_prompt 必须明确写入：{POSITIVE_STYLE_PROMPT}"
+                        f"所有 positive_prompt 必须明确写入：{style_prompt}"
                     ),
                 },
                 {
@@ -100,7 +132,7 @@ class OpenAICompatibleClient:
                     "content": (
                         f"{correction}"
                         f"请把以下小说章节拆成正好 {image_count} 个不同场景视角的插画提示词，"
-                        "所有场景保持漫画封面风格，"
+                        f"所有场景保持以下组合风格：{style_prompt}"
                         f'并返回 {{"prompts":[...]}}，prompts 数组长度必须等于 {image_count}。\n\n'
                         f"{chapter_text}"
                     ),

@@ -1,17 +1,27 @@
 from pathlib import Path
 
 
+VALID_VISUAL_STYLES = {"urban_live", "ancient_live", "urban_anime", "ancient_anime"}
+VALID_GENRE_STYLES = {"romance", "fantasy", "suspense", "scifi", "apocalypse"}
+
+
 class IllustrationService:
     def __init__(self, repository, ai_client, outputs_dir):
         self.repository = repository
         self.ai_client = ai_client
         self.outputs_dir = Path(outputs_dir)
 
-    def create_prompt_task(self, chapter_text, image_count, owner_id):
-        self._validate_task_input(chapter_text, image_count)
-        task_id = self.repository.create_task(chapter_text.strip(), image_count, owner_id)
+    def create_prompt_task(self, chapter_text, image_count, owner_id, visual_style=None, genre_style=None):
+        self._validate_task_input(chapter_text, image_count, visual_style, genre_style)
+        task_id = self.repository.create_task(
+            chapter_text.strip(),
+            image_count,
+            owner_id,
+            visual_style,
+            genre_style,
+        )
         try:
-            prompts = self.ai_client.split_chapter(chapter_text.strip(), image_count)
+            prompts = self.ai_client.split_chapter(chapter_text.strip(), image_count, visual_style, genre_style)
             self.repository.replace_prompts(task_id, prompts, owner_id)
             return self.repository.get_task(task_id, owner_id)
         except Exception as exc:
@@ -109,11 +119,15 @@ class IllustrationService:
             self.repository.update_task_status(task_id, "partial_failed", owner_id=owner_id)
         return self.repository.get_task(task_id, owner_id)
 
-    def _validate_task_input(self, chapter_text, image_count):
+    def _validate_task_input(self, chapter_text, image_count, visual_style=None, genre_style=None):
         if not chapter_text or not chapter_text.strip():
             raise ValueError("Chapter text is required.")
         if image_count < 1 or image_count > 10:
             raise ValueError("Image count must be between 1 and 10.")
+        if visual_style not in VALID_VISUAL_STYLES:
+            raise ValueError("Visual style is required.")
+        if genre_style not in VALID_GENRE_STYLES:
+            raise ValueError("Genre style is required.")
 
     def _validate_prompt(self, prompt):
         for field in ("title", "scene_summary", "viewpoint", "positive_prompt", "negative_prompt"):

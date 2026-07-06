@@ -18,6 +18,8 @@ class TaskRepository:
                     owner_id TEXT,
                     chapter_text TEXT NOT NULL,
                     image_count INTEGER NOT NULL,
+                    visual_style TEXT,
+                    genre_style TEXT,
                     status TEXT NOT NULL,
                     error_message TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -50,6 +52,7 @@ class TaskRepository:
                 """
             )
             self._ensure_owner_column(conn)
+            self._ensure_style_columns(conn)
             if legacy_owner_id:
                 conn.execute(
                     "UPDATE tasks SET owner_id = ? WHERE owner_id IS NULL OR owner_id = ''",
@@ -57,15 +60,15 @@ class TaskRepository:
                 )
             conn.commit()
 
-    def create_task(self, chapter_text, image_count, owner_id):
+    def create_task(self, chapter_text, image_count, owner_id, visual_style=None, genre_style=None):
         task_id = uuid.uuid4().hex
         with closing(self._connect()) as conn:
             conn.execute(
                 """
-                INSERT INTO tasks (id, owner_id, chapter_text, image_count, status)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO tasks (id, owner_id, chapter_text, image_count, visual_style, genre_style, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, owner_id, chapter_text, image_count, "created"),
+                (task_id, owner_id, chapter_text, image_count, visual_style, genre_style, "created"),
             )
             conn.commit()
         return task_id
@@ -200,7 +203,7 @@ class TaskRepository:
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 """
-                SELECT id, image_count, status, error_message, created_at, updated_at,
+                SELECT id, image_count, visual_style, genre_style, status, error_message, created_at, updated_at,
                        substr(chapter_text, 1, 120) AS chapter_preview
                 FROM tasks
                 WHERE owner_id = ?
@@ -254,6 +257,13 @@ class TaskRepository:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()]
         if "owner_id" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN owner_id TEXT")
+
+    def _ensure_style_columns(self, conn):
+        columns = [row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "visual_style" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN visual_style TEXT")
+        if "genre_style" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN genre_style TEXT")
 
     def _task_exists(self, conn, task_id, owner_id):
         row = conn.execute(
