@@ -21,8 +21,8 @@ POSITIVE_STYLE_PROMPT = (
 )
 
 VISUAL_STYLE_PROMPTS = {
-    "urban_live": "漫画封面、现代城市背景、现代服装与生活道具、真人剧照感、影视海报质感、真实人物比例、强逆光",
-    "ancient_live": "漫画封面、古装时代背景、古装服饰与传统建筑、真人剧照感、影视海报质感、真实人物比例、强逆光",
+    "urban_live": "现代城市背景、现代服装与生活道具、真人剧照感、影视海报质感、真实人物比例、强逆光",
+    "ancient_live": "古装时代背景、古装服饰与传统建筑、真人剧照感、影视海报质感、真实人物比例、强逆光",
     "urban_anime": (
         "漫画封面、现代城市背景、现代服装与生活道具、精致二次元动漫插画、清晰线稿、"
         "赛璐璐上色与轻厚涂结合、强逆光、漫画PV截图质感"
@@ -103,8 +103,10 @@ class OpenAICompatibleClient:
 
     def _ensure_positive_style(self, items, style_prompt):
         for item in items:
-            if style_prompt not in item["positive_prompt"]:
-                item["positive_prompt"] = f"{style_prompt}{item['positive_prompt']}"
+            prompt = item["positive_prompt"].strip()
+            while prompt.startswith(style_prompt):
+                prompt = prompt[len(style_prompt):].lstrip(" ，,、。")
+            item["positive_prompt"] = f"{style_prompt}{prompt}"
         return items
 
     def _build_split_payload(self, chapter_text, image_count, style_prompt, previous_count=None):

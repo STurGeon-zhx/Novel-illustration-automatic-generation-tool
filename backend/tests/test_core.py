@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.ai_client import extract_prompt_items
 from app.ai_client import OpenAICompatibleClient
 from app.ai_client import POSITIVE_STYLE_PROMPT
+from app.ai_client import build_positive_style_prompt
 from app.main import CreateTaskRequest
 from app.main import create_task as create_task_endpoint
 from app.repository import TaskRepository
@@ -163,9 +164,39 @@ class AgnesClientTests(unittest.TestCase):
         self.assertIn("现代城市", joined_messages)
         self.assertIn("真人剧照感", joined_messages)
         self.assertIn("悬疑氛围", joined_messages)
+        self.assertNotIn("漫画封面", joined_messages)
         self.assertNotIn("古装", joined_messages)
         self.assertIn("现代城市", prompts[0]["positive_prompt"])
         self.assertIn("悬疑氛围", prompts[0]["positive_prompt"])
+        self.assertNotIn("漫画封面", prompts[0]["positive_prompt"])
+
+    def test_live_action_style_prompt_does_not_include_comic_cover(self):
+        style_prompt = build_positive_style_prompt("urban_live", "romance")
+
+        self.assertIn("真人剧照感", style_prompt)
+        self.assertNotIn("漫画封面", style_prompt)
+
+    def test_positive_style_injection_removes_duplicate_style_prefixes(self):
+        client = RecordingAgnesClient()
+        style_prompt = build_positive_style_prompt("urban_live", "romance")
+        repeated_prompt = f"{style_prompt}{style_prompt}男女主在城市街角对视，霓虹光影落在脸上。"
+
+        items = client._ensure_positive_style(
+            [
+                {
+                    "title": "街角对视",
+                    "scene_summary": "男女主在城市街角对视",
+                    "viewpoint": "中景",
+                    "positive_prompt": repeated_prompt,
+                    "negative_prompt": "低清晰度",
+                }
+            ],
+            style_prompt,
+        )
+
+        positive_prompt = items[0]["positive_prompt"]
+        self.assertTrue(positive_prompt.startswith(style_prompt))
+        self.assertEqual(positive_prompt.count(style_prompt), 1)
 
     def test_split_chapter_builds_ancient_anime_fantasy_style(self):
         client = RecordingAgnesClient()
